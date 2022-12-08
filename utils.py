@@ -272,7 +272,6 @@ class Helper:
                                  window_size=2,
                                  num_ns=4)
             word2vec_vectors = gen.load('word2vec-google-news-300')
-            word2vec_vectors = word2vec_vectors.wv
             num_vocab = len(voc)
             embedding_dim = self.embeded_vector_size
             hits = 0
