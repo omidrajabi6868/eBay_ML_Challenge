@@ -19,8 +19,12 @@ class skip_gram:
         self.vocab_size = vocab_size
         self.embedding_dim = embedding_dim
         self.vocab_to_index = vocab_to_idx
-        if not os.path.exists('Models/word2vec_model.tf'):
+        if not os.path.exists('Data/word2vec_dataset'):
             self.dataset = self.generate_training_data(sequences, window_size, num_ns)
+        else:
+            with open("Data/word2vec_dataset" + ".pickle", 'rb') as pickle_file:
+                element_spec = pickle.load(pickle_file)
+            self.dataset = tf.data.experimental.load("Data/word2vec_dataset", element_spec=element_spec)
         self.word2vec = Word2Vec(self.vocab_size, self.embedding_dim, num_ns)
 
     def generate_training_data(self, sequences, window_size, num_ns):
@@ -64,24 +68,23 @@ class skip_gram:
                 labels.append(label)
 
         BATCH_SIZE = 1024
-        BUFFER_SIZE = 10000
+        BUFFER_SIZE = 100000
         dataset = tf.data.Dataset.from_tensor_slices(((targets, contexts), labels))
         dataset = dataset.shuffle(BUFFER_SIZE).batch(BATCH_SIZE, drop_remainder=True)
         dataset = dataset.cache().prefetch(buffer_size=AUTOTUNE)
+        tf.data.experimental.save(dataset=dataset, path="Data/word2vec_dataset")
+        with open("Data/word2vec_dataset" + ".pickle", 'wb') as file:
+            pickle.dump(dataset.element_spec, file)
 
         return dataset
 
-    def word2vec_training(self):
-        opt = tf.keras.optimizers.Adam(1e-3)
-        self.word2vec.compile(optimizer= opt,
+    def word2vec_training(self, lr=1e-5, epochs=0):
+        opt = tf.keras.optimizers.Adam(lr)
+        self.word2vec.compile(optimizer=opt,
                          loss=tf.keras.losses.CategoricalCrossentropy(from_logits=True),
                          metrics=['accuracy'])
         tensorboard_callback = tf.keras.callbacks.TensorBoard(log_dir="logs")
-        if not os.path.exists('Models/word2vec_model.tf'):
-            self.word2vec.fit(self.dataset, epochs=30, callbacks=[tensorboard_callback])
-        else:
-            self.word2vec = tf.keras.models.load_model('Models/word2vec_model.tf')
-
+        self.word2vec.fit(self.dataset, batch_size=128, epochs=epochs, callbacks=[tensorboard_callback])
         self.word2vec.save('Models/word2vec_model.tf')
 
         return self.word2vec

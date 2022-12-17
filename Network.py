@@ -1,6 +1,5 @@
 from tensorflow.keras.layers import LSTM, Bidirectional, Dense, Embedding, GRU, Dropout
-from tensorflow.keras import regularizers
-from transformers import TFAutoModel, AutoConfig
+from transformers import TFAutoModel
 from utils import positional_encoding
 
 import tensorflow as tf
@@ -12,7 +11,7 @@ class Net:
 
     def __init__(self, vocab_num, embed_vector_size=32,
                  embedding_matrix='uniform', embedding_trainable=False, embedding_type='scratch'):
-        self.learning_rate = 1e-4
+        self.learning_rate = 1e-3
         self.epochs = 500
         self.vocab_num = vocab_num
         self.embedding_trainable = embedding_trainable
@@ -21,7 +20,7 @@ class Net:
             self.embeddings_initializer = tf.keras.initializers.Constant(embedding_matrix)
         else:
             self.embeddings_initializer = 'uniform'
-        # self.model = self.create_transformer_model(ff_dim=32, num_heads=2)
+        # self.model = self.create_transformer_model(ff_dim=512, num_heads=2)
         self.model = self.create_bidirectional_model()
         # self.model = self.create_bert_model()
 
@@ -33,8 +32,10 @@ class Net:
                             trainable=self.embedding_trainable,
                             input_length=59))
 
-        model.add(Bidirectional(LSTM(256, return_sequences=True), input_shape=(59, self.embed_vector_size)))
-        model.add(Bidirectional(LSTM(64, return_sequences=True)))
+        model.add(Bidirectional(LSTM(512, return_sequences=True, activation='relu'), input_shape=(59, self.embed_vector_size)))
+        model.add(Dropout(0.2))
+        model.add(Dense(128, activation='relu'))
+        model.add(Dropout(0.5))
         model.add(Dense(34, activation='softmax'))
 
         opt = tf.keras.optimizers.Adam(self.learning_rate)
@@ -58,14 +59,15 @@ class Net:
 
     def create_bert_model(self):
 
-        base_model = TFAutoModel.from_pretrained("bert-base-uncased", trainable=False)
+        base_model = TFAutoModel.from_pretrained("bert-base-uncased", trainable=True)
         input_ids = tf.keras.layers.Input(shape=(90,), name="input_ids", dtype="int32")
         attenion_mask = tf.keras.layers.Input(shape=(90,), name="attention_mask", dtype="int32")
         x = base_model(input_ids, attention_mask=attenion_mask)
 
-        x = Bidirectional(LSTM(128, return_sequences=True))(x.last_hidden_state)
+        x = Bidirectional(LSTM(512, return_sequences=True, activation='relu'))(x.last_hidden_state)
         x = Dropout(0.2)(x)
-        x = Bidirectional(LSTM(34, return_sequences=True))(x)
+        x = Dense(128, activation='relu')(x)
+        x = Dropout(0.5)(x)
         x = Dense(34, activation='softmax')(x)
 
         opt = tf.keras.optimizers.Adam(self.learning_rate)
@@ -80,7 +82,8 @@ class Net:
         log_dir = "logs/fit/" + datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
         tensorboard_callback = tf.keras.callbacks.TensorBoard(log_dir=log_dir, histogram_freq=1)
         path_checkpoint = f"Models/final_model_{embedding_type}.h5"
-        es_callback = tf.keras.callbacks.EarlyStopping(monitor="val_loss", min_delta=0, patience=100)
+        es_callback = tf.keras.callbacks.EarlyStopping(monitor="val_loss", min_delta=0, patience=50)
+        reduce_lr = tf.keras.callbacks.ReduceLROnPlateau(monitor='val_loss', factor=0.1, patience=2, min_lr=0.0001)
 
         modelckpt_callback = tf.keras.callbacks.ModelCheckpoint(
             monitor="val_loss",
@@ -93,7 +96,7 @@ class Net:
                        batch_size=64,
                        validation_split=0.05,
                        epochs=self.epochs,
-                       callbacks=[modelckpt_callback, es_callback, tensorboard_callback])
+                       callbacks=[modelckpt_callback, es_callback, tensorboard_callback, reduce_lr])
 
         return self.model
 

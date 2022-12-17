@@ -1,11 +1,9 @@
-from tensorflow.keras.models import load_model
 from Network import Net
 from utils import Helper
 
-import tensorflow as tf
-import pickle
 import pandas as pd
 import os
+import tensorflow as tf
 
 
 # Hide GPU from visible devices
@@ -25,16 +23,17 @@ def main():
     embedding_type = embedding_types[2]
 
     list_titles_df = pd.read_csv('Data/Listing_Titles.tsv.gz', header=0, delimiter="\t", quoting=3)
-    max_spaces = max(title.count(" ") for title in list_titles_df['Title'])
+    # max_spaces = max(title.count(" ") for title in list_titles_df['Title'])
+    max_spaces = 58
     print('Listing Titles: ')
     print(list_titles_df.head())
-    list_titles_df = list_titles_df[:1000000]
+    list_titles_df = list_titles_df[:50000]
 
     train_tagged_df = pd.read_csv('Data/Train_Tagged_Titles.tsv.gz', header=0, delimiter="\t", quoting=3)
     print('Listing Trained Tags: ')
     print(train_tagged_df.head())
 
-    helper = Helper(list_titles_df, train_tagged_df, max_spaces + 1, embedding_type, embeded_vector_size=50)
+    helper = Helper(list_titles_df, train_tagged_df, max_spaces + 1, embedding_type, embeded_vector_size=300)
 
     if not os.path.exists('Data/dataset.pkl'):
         helper.build_dataset()
@@ -45,7 +44,8 @@ def main():
     if not os.path.exists('Data/words_list'):
         helper.vocab_builder()
 
-    x_train, y_train = helper.load_data()
+    X, Y = helper.load_data()
+    x_train, y_train = X[:4500], Y[:4500]
 
     net = Net(vocab_num=len(helper.vocab_to_index),
               embed_vector_size=helper.embeded_vector_size,
@@ -61,10 +61,9 @@ def main():
     net.model.load_weights(f'Models/final_model_{embedding_type}.h5')
     # net.train_model(x_train, y_train, embedding_type)
 
-    quize_data = helper.df_titles[5000:30000]
+    quize_data = helper.df_titles[4500:5000]
     helper.test_model(net.model, quize_data)
-
-    return
+    print('Weighted F1 score is: ', helper.evaluate(train_tagged_df))
 
 
 if __name__ == '__main__':

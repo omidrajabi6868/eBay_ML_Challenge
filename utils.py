@@ -1,4 +1,5 @@
 import pickle
+import os
 import numpy as np
 import pandas as pd
 import tensorflow as tf
@@ -15,7 +16,6 @@ from tensorflow.keras.layers import TextVectorization
 from SkipGram import skip_gram
 from transformers import AutoTokenizer, TFAutoModel
 from unicodedata import normalize
-
 
 
 def positional_encoding(length, depth):
@@ -240,7 +240,7 @@ class Helper:
                     misses += 1
             print("Converted %d words (%d misses)" % (hits, misses))
             self.embedding_matrix = embedding_matrix
-            x_train = self.vectorizer(np.array([[s] for s in df_titles['Title'][:5000]])).numpy()
+            x_train = self.vectorizer(np.array([[s] for s in df_titles['Title'][:4500]])).numpy()
 
             for i in range(int(len(y) / 59)):
                 y_train.append(y[59 * i:59 * (i + 1)])
@@ -270,8 +270,15 @@ class Helper:
                                  self.vocab_to_index,
                                  embedding_dim=self.embeded_vector_size,
                                  window_size=2,
-                                 num_ns=4)
+                                 num_ns=5)
             word2vec_vectors = gen.load('word2vec-google-news-300')
+            path_to_glove_file = f'Data/glove.6B/glove.6B.{self.embeded_vector_size}d.txt'
+            embeddings_index = {}
+            with open(path_to_glove_file) as f:
+                for line in f:
+                    word, coefs = line.split(maxsplit=1)
+                    coefs = np.fromstring(coefs, "f", sep=" ")
+                    embeddings_index[word] = coefs
             num_vocab = len(voc)
             embedding_dim = self.embeded_vector_size
             hits = 0
@@ -279,20 +286,29 @@ class Helper:
             # Prepare embedding matrix
             embedding_matrix = np.zeros((num_vocab, embedding_dim))
             for word, i in word_index.items():
-                embedding_vector = word2vec_vectors[word]
-                if embedding_vector is not None:
-                    # Words not found in embedding index will be all-zeros.
-                    # This includes the representation for "padding" and "OOV"
+                try:
+                    embedding_vector = word2vec_vectors[word]
                     embedding_matrix[i] = embedding_vector
                     hits += 1
-                else:
-                    misses += 1
+                except:
+                    embedding_vector = embeddings_index.get(word)
+                    if embedding_vector is not None:
+                        # Words not found in embedding index will be all-zeros.
+                        # This includes the representation for "padding" and "OOV"
+                        embedding_matrix[i] = embedding_vector
+                        hits += 1
+                    else:
+                        misses += 1
             print("Converted %d words (%d misses)" % (hits, misses))
             self.embedding_matrix = embedding_matrix
-            skip.word2vec.get_layer('w2v_embedding').set_weights(self.embedding_matrix)
-            word2vec_scratch = skip.word2vec_training()
-            self.embedding_matrix = word2vec_scratch.get_layer('w2v_embedding').get_weights()[0]
-            x_train = np.array(sequences[:5000])
+
+#             skip.word2vec_training(epochs=1)
+#             skip.word2vec.get_layer('w2v_embedding').set_weights([self.embedding_matrix])
+#             skip.word2vec_training(lr=1e-3, epochs=200)
+#             skip.word2vec.load_weights('Models/word2vec_model.tf')
+#             self.embedding_matrix = skip.word2vec.get_layer('w2v_embedding').get_weights()[0]
+
+            x_train = np.array(sequences[:4500])
 
             for i in range(int(len(y) / 59)):
                 y_train.append(y[59 * i:59 * (i + 1)])
@@ -302,10 +318,10 @@ class Helper:
         if self.embedding_type == 'bert':
             self.vectorizer = AutoTokenizer.from_pretrained("bert-base-uncased")
             df_titles = self.clean_data(self.df_titles, 'Title')
-            tokenized_data = self.vectorizer(df_titles['Title'][:5000].to_list(),
-                                      padding='max_length',
-                                      max_length=90,
-                                      return_tensors="tf")
+            tokenized_data = self.vectorizer(df_titles['Title'][:4500].to_list(),
+                                             padding='max_length',
+                                             max_length=90,
+                                             return_tensors="tf")
 
             x_train = tokenized_data['input_ids']
             attention_mask = tokenized_data['attention_mask']
@@ -341,7 +357,7 @@ class Helper:
 
     def test_model(self, model, data):
         if self.embedding_type == 'scratch':
-            with open('output.tsv', 'w', encoding='utf-8') as fp:
+            with open('output.tsv', 'w', encoding='utf-8') as fp1:
                 for j, row in data.iterrows():
                     title = row['Title']
                     space_number = title.count(" ")
@@ -388,16 +404,16 @@ class Helper:
                             Aspect_Value.append(st)
 
                     for i in range(len(Aspect_Name)):
-                        fp.write(str(row['Record Number']) + "\t" + Aspect_Name[i] + "\t" + Aspect_Value[i] + '\r')
-                fp.close()
+                        fp1.write(str(row['Record Number']) + "\t" + Aspect_Name[i] + "\t" + Aspect_Value[i] + '\r')
+                fp1.close()
 
         if self.embedding_type in ['glove', 'bert', 'skip_gram']:
             clean_data = self.clean_data(data, 'Title')
-            with open('output.tsv', 'w', encoding='utf-8') as fp:
+            with open('output.tsv', 'w', encoding='utf-8') as fp1:
                 for j, row, in data.iterrows():
                     title = row['Title']
                     clean_title = clean_data['Title'][j]
-                    if self.embedding_type == 'glove':
+                    if self.embedding_type == 'bert':
                         tokenized_input = self.vectorizer(clean_title, padding='max_length',
                                                           max_length=90,
                                                           truncation=True,
@@ -429,7 +445,86 @@ class Helper:
                             Aspect_Value.append(st)
 
                     for i in range(len(Aspect_Name)):
-                        fp.write(str(row['Record Number']) + "\t" + Aspect_Name[i] + "\t" + Aspect_Value[i] + '\r')
-                fp.close()
+                        fp1.write(str(row['Record Number']) + "\t" + Aspect_Name[i] + "\t" + Aspect_Value[i] + '\r')
+                fp1.close()
+
+    def evaluate(self, train_tagged_df):
+        train_tagged_df = train_tagged_df[train_tagged_df['Record Number'] >= 4501]
+        train_tagged_df = train_tagged_df.fillna("")
+        # with open('ground_truth.tsv', 'w', encoding='utf-8') as fp:
+        #     Aspect_Name = []
+        #     Aspect_Value = []
+        #     Record_Number = []
+        #     for j, row in train_tagged_df.iterrows():
+        #         if row['Tag'] == "":
+        #             Aspect_Value[-1] += ' ' + row['Token']
+        #         else:
+        #             Record_Number.append(row['Record Number'])
+        #             Aspect_Name.append(row['Tag'])
+        #             Aspect_Value.append(row['Token'])
+        #
+        #     for i in range(len(Aspect_Name)):
+        #         fp.write(str(Record_Number[i]) + "\t" + Aspect_Name[i] + "\t" + Aspect_Value[i] + '\r')
+        #
+        #     fp.close()
+
+        true_df = pd.read_csv('ground_truth.tsv', header=None, delimiter="\t", quoting=3)
+        predicted_df = pd.read_csv('output.tsv', header=None, delimiter="\t", quoting=3)
+        count_of_labeled_aspect = list(np.zeros(34))
+        count_of_predicted_aspect = list(np.zeros(34))
+        precision = list(np.zeros(34))
+        recall = list(np.zeros(34))
+        f1_score = list(np.zeros(34))
+        for idx in range(34):
+            asp_name = self.str_dict_y[idx]
+            count_of_labeled_aspect[idx] = len(set(true_df[true_df.iloc[:, 1] == asp_name].iloc[:, 2]))
+            count_of_predicted_aspect[idx] = len(set(predicted_df[predicted_df.iloc[:, 1] == asp_name].iloc[:, 2]))
+            labeled_aspect = set(true_df[true_df.iloc[:, 1] == asp_name].iloc[:, 2])
+            predicted_aspect = set(predicted_df[predicted_df.iloc[:, 1] == asp_name].iloc[:, 2])
+            intersection = labeled_aspect.intersection(predicted_aspect)
+            if count_of_predicted_aspect[idx] > 0:
+                precision[idx] = len(intersection)/count_of_predicted_aspect[idx]
+            if count_of_labeled_aspect[idx] > 0:
+                recall[idx] = len(intersection)/count_of_labeled_aspect[idx]
+            if precision[idx] + recall[idx] > 0:
+                f1_score[idx] = 2 * (precision[idx]*recall[idx])/(precision[idx] + recall[idx])
+
+        weighted_f1_score = (np.array(count_of_labeled_aspect)/sum(count_of_labeled_aspect)) * np.array(f1_score)
+        weighted_precision = (np.array(count_of_labeled_aspect)/sum(count_of_labeled_aspect)) * np.array(precision)
+        weighted_recall = (np.array(count_of_labeled_aspect)/sum(count_of_labeled_aspect)) * np.array(recall)
+
+        final_f1_score = sum(weighted_f1_score)
+        final_precision = sum(weighted_precision)
+        final_recall = sum(weighted_recall)
+
+        header = ['Entity Name', 'Precision', 'Recall', 'F1-score', 'Wf1-score']
+        table = []
+        table.append(header)
+        for idx in range(34):
+            if self.str_dict_y[idx] in ["", "none"]:
+                continue
+            table.append([self.str_dict_y[idx], "{:.2f}".format(precision[idx]), "{:.2f}".format(recall[idx]),
+                          "{:.2f}".format(f1_score[idx]),  "{:.2f}".format(weighted_f1_score[idx])])
+
+        table = pd.DataFrame(table)
+        table.to_csv('metrics.txt')
+
+        # Open the file in append & read mode ('a+')
+        with open("metrics.txt", "a+") as file_object:
+            file_object.write(f'\n Final f1 score is: {final_f1_score}')
+            file_object.write(f'\n Final precision is: {final_precision}')
+            file_object.write(f'\n Final recall is: {final_recall}')
+            file_object.close()
+
+        return final_f1_score
+
+
+
+
+
+
+
+
+
 
 
